@@ -166,6 +166,7 @@ func TestTemplateInstanceAutoEmitDispatchesLocalHandlerAndEmpireStyleSideEffect(
 	workflowStore := runtimepipeline.NewWorkflowInstanceStore(db)
 	manager := runtimemanager.NewAgentManagerWithOptions(bus, nil, runtimemanager.AgentManagerOptions{
 		WorkflowInstances: workflowStore,
+		LifecycleStore:    pg,
 	})
 	module := newRuntimeTestWorkflowModule(t, source)
 	pc := runtimepipeline.NewPipelineCoordinatorWithOptions(bus, db, runtimepipeline.PipelineCoordinatorOptions{
@@ -258,6 +259,7 @@ func TestTemplateInstanceActivationConfigSubscriberPersistsRenderedRouteAndDeliv
 	workflowStore := runtimepipeline.NewWorkflowInstanceStore(db)
 	manager := runtimemanager.NewAgentManagerWithOptions(bus, nil, runtimemanager.AgentManagerOptions{
 		WorkflowInstances: workflowStore,
+		LifecycleStore:    pg,
 	})
 	module := newRuntimeTestWorkflowModule(t, source)
 	pc := runtimepipeline.NewPipelineCoordinatorWithOptions(bus, db, runtimepipeline.PipelineCoordinatorOptions{
@@ -341,6 +343,7 @@ func TestTemplateInstanceConnectLifecyclePublishRollbackDoesNotLeakInstanceOrRou
 	}
 	manager = runtimemanager.NewAgentManagerWithOptions(bus, nil, runtimemanager.AgentManagerOptions{
 		WorkflowInstances: workflowStore,
+		LifecycleStore:    pg,
 	})
 	proofStore.failDeliveryRoutes = true
 	evt := eventtest.RootIngress(
@@ -420,6 +423,7 @@ func TestTemplateInstanceAcknowledgedPublishDispatchesRoutedSystemNodeWithoutInt
 	workflowStore := runtimepipeline.NewWorkflowInstanceStore(db)
 	manager := runtimemanager.NewAgentManagerWithOptions(bus, nil, runtimemanager.AgentManagerOptions{
 		WorkflowInstances: workflowStore,
+		LifecycleStore:    pg,
 	})
 	module := newRuntimeTestWorkflowModule(t, source)
 	pc = runtimepipeline.NewPipelineCoordinatorWithOptions(bus, db, runtimepipeline.PipelineCoordinatorOptions{
@@ -529,6 +533,7 @@ func TestTemplateInstanceRootOutboxEventDispatchesRoutedSystemNodeAndEmpireStyle
 	workflowStore := runtimepipeline.NewWorkflowInstanceStore(db)
 	manager := runtimemanager.NewAgentManagerWithOptions(bus, nil, runtimemanager.AgentManagerOptions{
 		WorkflowInstances: workflowStore,
+		LifecycleStore:    pg,
 	})
 	module := newRuntimeTestWorkflowModule(t, source)
 	pc := runtimepipeline.NewPipelineCoordinatorWithOptions(bus, db, runtimepipeline.PipelineCoordinatorOptions{
@@ -814,6 +819,7 @@ auto_emit_on_create:
   type: generic
   role: ceo
   mode: task
+  model: regular
   subscriptions: [opco.product_initialization_requested]
 `,
 	}

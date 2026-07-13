@@ -10,6 +10,7 @@ import (
 
 	"github.com/division-sh/swarm/internal/events"
 	runtimepkg "github.com/division-sh/swarm/internal/runtime"
+	runtimepipeline "github.com/division-sh/swarm/internal/runtime/pipeline"
 	"github.com/google/uuid"
 )
 
@@ -46,8 +47,12 @@ func (s *PostgresStore) RuntimeLogLineageParentEventID(ctx context.Context, runI
 	if _, err := uuid.Parse(subjectEventID); err != nil {
 		return "", nil
 	}
+	queryer := rowQueryer(s.DB)
+	if tx, ok := runtimepipeline.PipelineSQLTxFromContext(ctx); ok && tx != nil {
+		queryer = tx
+	}
 	var exists bool
-	if err := s.DB.QueryRowContext(ctx, `
+	if err := queryer.QueryRowContext(ctx, `
 		SELECT EXISTS (
 			SELECT 1
 			FROM events
@@ -74,7 +79,7 @@ func (s *PostgresStore) PersistRuntimeLog(ctx context.Context, record runtimepkg
 	if !enabled {
 		return unsupportedSchemaCapability("events", SchemaFlavorUnavailable)
 	}
-	if err := s.validateEventPayload(runtimeLogEventName, record.Payload); err != nil {
+	if err := s.validateEventPayload(ctx, runtimeLogEventName, record.Payload); err != nil {
 		return err
 	}
 	evt, err := events.AdmitForPersistence(runtimeLogEvent(record), events.AdmissionOptions{})
@@ -82,9 +87,19 @@ func (s *PostgresStore) PersistRuntimeLog(ctx context.Context, record runtimepkg
 		return err
 	}
 	if strings.TrimSpace(record.RunID) != "" {
-		return s.AppendEvent(ctx, evt)
+		if tx, ok := runtimepipeline.PipelineSQLTxFromContext(ctx); ok && tx != nil {
+			return s.AppendEventTx(withDiagnosticDirectOwner(ctx, diagnosticDirectRuntimeLog), tx, evt)
+		}
+		return s.AppendEvent(withDiagnosticDirectOwner(ctx, diagnosticDirectRuntimeLog), evt)
 	}
-	_, err = s.DB.ExecContext(ctx, `
+	if err := validateDiagnosticDirectOwner(withDiagnosticDirectOwner(ctx, diagnosticDirectRuntimeLog), evt); err != nil {
+		return err
+	}
+	exec := s.DB.ExecContext
+	if tx, ok := runtimepipeline.PipelineSQLTxFromContext(ctx); ok && tx != nil {
+		exec = tx.ExecContext
+	}
+	_, err = exec(ctx, `
 		INSERT INTO events (
 			event_id, event_name, entity_id, flow_instance, scope, payload,
 			chain_depth, produced_by, produced_by_type, source_event_id, created_at
@@ -116,8 +131,12 @@ func (s *SQLiteRuntimeStore) RuntimeLogLineageParentEventID(ctx context.Context,
 	if _, err := uuid.Parse(subjectEventID); err != nil {
 		return "", nil
 	}
+	queryer := rowQueryer(s.DB)
+	if tx, ok := runtimepipeline.PipelineSQLTxFromContext(ctx); ok && tx != nil {
+		queryer = tx
+	}
 	var exists bool
-	if err := s.DB.QueryRowContext(ctx, `
+	if err := queryer.QueryRowContext(ctx, `
 		SELECT EXISTS (
 			SELECT 1
 			FROM events
@@ -144,7 +163,7 @@ func (s *SQLiteRuntimeStore) PersistRuntimeLog(ctx context.Context, record runti
 	if !enabled {
 		return unsupportedSchemaCapability("events", SchemaFlavorUnavailable)
 	}
-	if err := s.validateEventPayload(runtimeLogEventName, record.Payload); err != nil {
+	if err := s.validateEventPayload(ctx, runtimeLogEventName, record.Payload); err != nil {
 		return err
 	}
 	evt, err := events.AdmitForPersistence(runtimeLogEvent(record), events.AdmissionOptions{})
@@ -152,9 +171,13 @@ func (s *SQLiteRuntimeStore) PersistRuntimeLog(ctx context.Context, record runti
 		return err
 	}
 	if strings.TrimSpace(record.RunID) != "" {
-		return s.AppendEvent(ctx, evt)
+		return s.AppendEvent(withDiagnosticDirectOwner(ctx, diagnosticDirectRuntimeLog), evt)
 	}
 	return s.runRuntimeMutation(ctx, "sqlite runtime log", func(txctx context.Context, tx *sql.Tx) error {
+		txctx = withDiagnosticDirectOwner(txctx, diagnosticDirectRuntimeLog)
+		if err := validateDiagnosticDirectOwner(txctx, evt); err != nil {
+			return err
+		}
 		_, err := tx.ExecContext(txctx, `
 			INSERT OR IGNORE INTO events (
 				event_id, run_id, event_name, entity_id, flow_instance, source_route, target_route, target_set,

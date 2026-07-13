@@ -212,12 +212,4 @@ func TestPostgresStore_Smoke_ManagerEventsMailboxInboundScanCampaigns(t *testing
 		t.Fatalf("decide mailbox: %v", err)
 	}
 
-	// Inbound dedupe record.
-	if ok, err := pg.RecordInboundEvent(ctx, "evt-1", entityID, "chat"); err != nil || !ok {
-		t.Fatalf("record inbound err=%v ok=%v", err, ok)
-	}
-	if ok, err := pg.RecordInboundEvent(ctx, "evt-1", entityID, "chat"); err != nil || ok {
-		t.Fatalf("record inbound duplicate err=%v ok=%v", err, ok)
-	}
-
 }

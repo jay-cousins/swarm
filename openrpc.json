@@ -2370,7 +2370,7 @@
           }
         },
         {
-          "code": -32039,
+          "code": -32040,
           "message": "Application error: TURN_NOT_FOUND",
           "data": {
             "additionalProperties": false,
@@ -3019,7 +3019,7 @@
           }
         },
         {
-          "code": -32039,
+          "code": -32040,
           "message": "Application error: TURN_NOT_FOUND",
           "data": {
             "additionalProperties": false,
@@ -3709,7 +3709,7 @@
           }
         },
         {
-          "code": -32040,
+          "code": -32041,
           "message": "Application error: UNSUPPORTED_BUNDLE_HASH",
           "data": {
             "additionalProperties": false,
@@ -3744,7 +3744,7 @@
           }
         },
         {
-          "code": -32042,
+          "code": -32043,
           "message": "Application error: UNSUPPORTED_BUNDLE_REF",
           "data": {
             "additionalProperties": false,
@@ -6635,7 +6635,7 @@
           }
         },
         {
-          "code": -32040,
+          "code": -32041,
           "message": "Application error: UNSUPPORTED_BUNDLE_HASH",
           "data": {
             "additionalProperties": false,
@@ -6670,7 +6670,7 @@
           }
         },
         {
-          "code": -32042,
+          "code": -32043,
           "message": "Application error: UNSUPPORTED_BUNDLE_REF",
           "data": {
             "additionalProperties": false,
@@ -7968,6 +7968,405 @@
       }
     },
     {
+      "name": "standing.reset",
+      "description": "Destructively quiesce and retire the current standing generation, preserve its evidence, create the deterministic next generation, clear current state, and rematerialize from the declaration without store surgery.",
+      "params": [
+        {
+          "name": "service_id",
+          "required": true,
+          "schema": {
+            "$ref": "#/components/schemas/OpaqueId"
+          }
+        },
+        {
+          "name": "reason",
+          "required": false,
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "idempotency_key",
+          "required": false,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "required": true,
+        "schema": {
+          "$ref": "#/components/schemas/StandingServiceMutationResult"
+        }
+      },
+      "errors": [
+        {
+          "code": -32039,
+          "message": "Application error: STANDING_SERVICE_NOT_FOUND",
+          "data": {
+            "additionalProperties": false,
+            "properties": {
+              "code": {
+                "const": "STANDING_SERVICE_NOT_FOUND",
+                "type": "string"
+              },
+              "correlation_id": {
+                "type": "string"
+              },
+              "details": {
+                "additionalProperties": false,
+                "properties": {
+                  "service_id": {
+                    "$ref": "#/components/schemas/OpaqueId"
+                  }
+                },
+                "required": [
+                  "service_id"
+                ],
+                "type": "object"
+              },
+              "retryable": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "code",
+              "details",
+              "retryable",
+              "correlation_id"
+            ],
+            "type": "object"
+          }
+        },
+        {
+          "code": -32024,
+          "message": "Application error: IDEMPOTENCY_CONFLICT",
+          "data": {
+            "additionalProperties": false,
+            "properties": {
+              "code": {
+                "const": "IDEMPOTENCY_CONFLICT",
+                "type": "string"
+              },
+              "correlation_id": {
+                "type": "string"
+              },
+              "details": {
+                "additionalProperties": false,
+                "properties": {
+                  "conflicting_request_hash": {
+                    "$ref": "#/components/schemas/Sha256Fingerprint"
+                  },
+                  "original_request_hash": {
+                    "$ref": "#/components/schemas/Sha256Fingerprint"
+                  },
+                  "original_response_ref": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "method": {
+                        "type": "string"
+                      },
+                      "resource_id": {
+                        "$ref": "#/components/schemas/OpaqueId"
+                      }
+                    },
+                    "required": [
+                      "method",
+                      "resource_id"
+                    ],
+                    "type": "object"
+                  }
+                },
+                "required": [
+                  "original_request_hash",
+                  "conflicting_request_hash",
+                  "original_response_ref"
+                ],
+                "type": "object"
+              },
+              "retryable": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "code",
+              "details",
+              "retryable",
+              "correlation_id"
+            ],
+            "type": "object"
+          }
+        }
+      ]
+    },
+    {
+      "name": "standing.resume",
+      "description": "Clear a persistent standing-service suspension and reconstruct its routes, agents, schedules, and ingress from the currently loaded declaration. Orphaned services refuse until the declaration is restored.",
+      "params": [
+        {
+          "name": "service_id",
+          "required": true,
+          "schema": {
+            "$ref": "#/components/schemas/OpaqueId"
+          }
+        },
+        {
+          "name": "reason",
+          "required": false,
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "idempotency_key",
+          "required": false,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "required": true,
+        "schema": {
+          "$ref": "#/components/schemas/StandingServiceMutationResult"
+        }
+      },
+      "errors": [
+        {
+          "code": -32039,
+          "message": "Application error: STANDING_SERVICE_NOT_FOUND",
+          "data": {
+            "additionalProperties": false,
+            "properties": {
+              "code": {
+                "const": "STANDING_SERVICE_NOT_FOUND",
+                "type": "string"
+              },
+              "correlation_id": {
+                "type": "string"
+              },
+              "details": {
+                "additionalProperties": false,
+                "properties": {
+                  "service_id": {
+                    "$ref": "#/components/schemas/OpaqueId"
+                  }
+                },
+                "required": [
+                  "service_id"
+                ],
+                "type": "object"
+              },
+              "retryable": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "code",
+              "details",
+              "retryable",
+              "correlation_id"
+            ],
+            "type": "object"
+          }
+        },
+        {
+          "code": -32024,
+          "message": "Application error: IDEMPOTENCY_CONFLICT",
+          "data": {
+            "additionalProperties": false,
+            "properties": {
+              "code": {
+                "const": "IDEMPOTENCY_CONFLICT",
+                "type": "string"
+              },
+              "correlation_id": {
+                "type": "string"
+              },
+              "details": {
+                "additionalProperties": false,
+                "properties": {
+                  "conflicting_request_hash": {
+                    "$ref": "#/components/schemas/Sha256Fingerprint"
+                  },
+                  "original_request_hash": {
+                    "$ref": "#/components/schemas/Sha256Fingerprint"
+                  },
+                  "original_response_ref": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "method": {
+                        "type": "string"
+                      },
+                      "resource_id": {
+                        "$ref": "#/components/schemas/OpaqueId"
+                      }
+                    },
+                    "required": [
+                      "method",
+                      "resource_id"
+                    ],
+                    "type": "object"
+                  }
+                },
+                "required": [
+                  "original_request_hash",
+                  "conflicting_request_hash",
+                  "original_response_ref"
+                ],
+                "type": "object"
+              },
+              "retryable": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "code",
+              "details",
+              "retryable",
+              "correlation_id"
+            ],
+            "type": "object"
+          }
+        }
+      ]
+    },
+    {
+      "name": "standing.suspend",
+      "description": "Persistently suspend a declaration-owned standing service, quiesce active deliveries, sessions, and timers, pause its current run, and withdraw inbound publication. The override survives restart.",
+      "params": [
+        {
+          "name": "service_id",
+          "required": true,
+          "schema": {
+            "$ref": "#/components/schemas/OpaqueId"
+          }
+        },
+        {
+          "name": "reason",
+          "required": false,
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "idempotency_key",
+          "required": false,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "required": true,
+        "schema": {
+          "$ref": "#/components/schemas/StandingServiceMutationResult"
+        }
+      },
+      "errors": [
+        {
+          "code": -32039,
+          "message": "Application error: STANDING_SERVICE_NOT_FOUND",
+          "data": {
+            "additionalProperties": false,
+            "properties": {
+              "code": {
+                "const": "STANDING_SERVICE_NOT_FOUND",
+                "type": "string"
+              },
+              "correlation_id": {
+                "type": "string"
+              },
+              "details": {
+                "additionalProperties": false,
+                "properties": {
+                  "service_id": {
+                    "$ref": "#/components/schemas/OpaqueId"
+                  }
+                },
+                "required": [
+                  "service_id"
+                ],
+                "type": "object"
+              },
+              "retryable": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "code",
+              "details",
+              "retryable",
+              "correlation_id"
+            ],
+            "type": "object"
+          }
+        },
+        {
+          "code": -32024,
+          "message": "Application error: IDEMPOTENCY_CONFLICT",
+          "data": {
+            "additionalProperties": false,
+            "properties": {
+              "code": {
+                "const": "IDEMPOTENCY_CONFLICT",
+                "type": "string"
+              },
+              "correlation_id": {
+                "type": "string"
+              },
+              "details": {
+                "additionalProperties": false,
+                "properties": {
+                  "conflicting_request_hash": {
+                    "$ref": "#/components/schemas/Sha256Fingerprint"
+                  },
+                  "original_request_hash": {
+                    "$ref": "#/components/schemas/Sha256Fingerprint"
+                  },
+                  "original_response_ref": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "method": {
+                        "type": "string"
+                      },
+                      "resource_id": {
+                        "$ref": "#/components/schemas/OpaqueId"
+                      }
+                    },
+                    "required": [
+                      "method",
+                      "resource_id"
+                    ],
+                    "type": "object"
+                  }
+                },
+                "required": [
+                  "original_request_hash",
+                  "conflicting_request_hash",
+                  "original_response_ref"
+                ],
+                "type": "object"
+              },
+              "retryable": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "code",
+              "details",
+              "retryable",
+              "correlation_id"
+            ],
+            "type": "object"
+          }
+        }
+      ]
+    },
+    {
       "name": "test.setup_entities",
       "description": "Public deterministic scenario-runner setup/pre-state mutation helper. This method seeds scenario-owned initial entity rows for exactly one scenario run after the runner has validated the authored setup against the loaded contract bundle. It is not a general product/runtime entity.create or entity.update surface, does not publish events, does not create delivery rows, does not infer handler outcomes, and does not accept private cataloge2e setup syntax. The server persists the run row under canonical bundle context and writes the requested initial entity state through the store owner. Scenario-visible verification remains through event.publish, run.diagnose/run.trace, entity.get/list, and other public read owners.\n",
       "params": [
@@ -8207,7 +8606,7 @@
           }
         },
         {
-          "code": -32040,
+          "code": -32041,
           "message": "Application error: UNSUPPORTED_BUNDLE_HASH",
           "data": {
             "additionalProperties": false,
@@ -11888,6 +12287,45 @@
         "pattern": "^sha256:[a-f0-9]{64}$",
         "type": "string"
       },
+      "StandingServiceMutationResult": {
+        "additionalProperties": false,
+        "properties": {
+          "effective_state": {
+            "enum": [
+              "active",
+              "suspended",
+              "orphaned"
+            ],
+            "type": "string"
+          },
+          "generation": {
+            "minimum": 1,
+            "type": "integer"
+          },
+          "run_id": {
+            "$ref": "#/components/schemas/OpaqueId"
+          },
+          "service_id": {
+            "$ref": "#/components/schemas/OpaqueId"
+          },
+          "transition": {
+            "enum": [
+              "suspended",
+              "operator_resumed",
+              "reset"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "service_id",
+          "run_id",
+          "generation",
+          "effective_state",
+          "transition"
+        ],
+        "type": "object"
+      },
       "SubscriberType": {
         "enum": [
           "node",
@@ -13912,8 +14350,46 @@
           "type": "object"
         }
       },
-      "TURN_NOT_FOUND": {
+      "STANDING_SERVICE_NOT_FOUND": {
         "code": -32039,
+        "message": "Application error: STANDING_SERVICE_NOT_FOUND",
+        "data": {
+          "additionalProperties": false,
+          "properties": {
+            "code": {
+              "const": "STANDING_SERVICE_NOT_FOUND",
+              "type": "string"
+            },
+            "correlation_id": {
+              "type": "string"
+            },
+            "details": {
+              "additionalProperties": false,
+              "properties": {
+                "service_id": {
+                  "$ref": "#/components/schemas/OpaqueId"
+                }
+              },
+              "required": [
+                "service_id"
+              ],
+              "type": "object"
+            },
+            "retryable": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "code",
+            "details",
+            "retryable",
+            "correlation_id"
+          ],
+          "type": "object"
+        }
+      },
+      "TURN_NOT_FOUND": {
+        "code": -32040,
         "message": "Application error: TURN_NOT_FOUND",
         "data": {
           "additionalProperties": false,
@@ -13956,7 +14432,7 @@
         }
       },
       "UNSUPPORTED_BUNDLE_HASH": {
-        "code": -32040,
+        "code": -32041,
         "message": "Application error: UNSUPPORTED_BUNDLE_HASH",
         "data": {
           "additionalProperties": false,
@@ -13991,7 +14467,7 @@
         }
       },
       "UNSUPPORTED_BUNDLE_HASH_FORK": {
-        "code": -32041,
+        "code": -32042,
         "message": "Application error: UNSUPPORTED_BUNDLE_HASH_FORK",
         "data": {
           "additionalProperties": false,
@@ -14041,7 +14517,7 @@
         }
       },
       "UNSUPPORTED_BUNDLE_REF": {
-        "code": -32042,
+        "code": -32043,
         "message": "Application error: UNSUPPORTED_BUNDLE_REF",
         "data": {
           "additionalProperties": false,

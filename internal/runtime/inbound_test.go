@@ -26,7 +26,11 @@ import (
 	"github.com/division-sh/swarm/internal/events"
 	"github.com/division-sh/swarm/internal/providertriggers"
 	runtimebus "github.com/division-sh/swarm/internal/runtime/bus"
+	runtimedeadletters "github.com/division-sh/swarm/internal/runtime/deadletters"
+	runtimefailures "github.com/division-sh/swarm/internal/runtime/failures"
+	runtimeinbound "github.com/division-sh/swarm/internal/runtime/inboundpublication"
 	runtimeingress "github.com/division-sh/swarm/internal/runtime/ingress"
+	runtimereplayclaim "github.com/division-sh/swarm/internal/runtime/replayclaim"
 	"github.com/division-sh/swarm/internal/runtime/semanticview"
 )
 
@@ -109,6 +113,11 @@ func newTestInboundGateway(t *testing.T, bus *runtimebus.EventBus, logger *Runti
 		t.Fatalf("load provider trigger registry: %v", err)
 	}
 	gateway := NewInboundGateway(bus, logger, shutdownAdmissionClosed, stores...)
+	if len(stores) > 0 && bus != nil {
+		if store, ok := stores[0].(interface{ bindTestInboundEventStore(runtimebus.EventStore) }); ok {
+			store.bindTestInboundEventStore(bus.Store())
+		}
+	}
 	gateway.SetCredentialStore(identityInboundCredentialStore{})
 	var resolver testInboundTargetResolver
 	if len(stores) > 0 {
@@ -190,24 +199,15 @@ func TestInboundGatewayResolvedTargetPreservesStandingAuthority(t *testing.T) {
 type rollbackTrackingInboundStore struct {
 	recorded bool
 	rolled   bool
+	store    runtimebus.EventStore
 }
 
-func (s *rollbackTrackingInboundStore) RecordInboundEvent(context.Context, string, string, string) (bool, error) {
-	s.recorded = true
-	return true, nil
+func (s *rollbackTrackingInboundStore) bindTestInboundEventStore(store runtimebus.EventStore) {
+	s.store = store
 }
 
 func (s *rollbackTrackingInboundStore) ResolveInboundTarget(context.Context, string, string) (InboundTarget, error) {
 	return InboundTarget{EntityID: "entity-1", EntitySlug: "entity-1"}, nil
-}
-
-func (s *rollbackTrackingInboundStore) PurgeInboundEventsBefore(context.Context, time.Time, int) (int, error) {
-	return 0, nil
-}
-
-func (s *rollbackTrackingInboundStore) DeleteInboundEvent(context.Context, string, string, string) error {
-	s.rolled = true
-	return nil
 }
 
 type recordingInboundStore struct {
@@ -218,22 +218,137 @@ type recordingInboundStore struct {
 	providerEventID string
 	entityID        string
 	provider        string
+	store           runtimebus.EventStore
+	record          runtimeinbound.Record
 }
 
-func (s *recordingInboundStore) RecordInboundEvent(_ context.Context, providerEventID, entityID, provider string) (bool, error) {
-	s.recorded = true
-	s.providerEventID = providerEventID
-	s.entityID = entityID
-	s.provider = provider
-	return s.inserted, nil
+func (s *recordingInboundStore) bindTestInboundEventStore(store runtimebus.EventStore) {
+	s.store = store
 }
 
 func (s *recordingInboundStore) ResolveInboundTarget(context.Context, string, string) (InboundTarget, error) {
 	return s.target, s.resolveErr
 }
 
-func (*recordingInboundStore) PurgeInboundEventsBefore(context.Context, time.Time, int) (int, error) {
-	return 0, nil
+type testInboundPublicationMutation struct {
+	ctx          context.Context
+	store        runtimebus.EventStore
+	finalization runtimeinbound.Finalization
+	finalized    bool
+}
+
+func newTestInboundPublicationMutation(ctx context.Context, store runtimebus.EventStore) *testInboundPublicationMutation {
+	mutation := &testInboundPublicationMutation{store: store}
+	mutation.ctx = runtimebus.WithEventMutationContext(ctx, mutation)
+	return mutation
+}
+
+func (m *testInboundPublicationMutation) Context() context.Context { return m.ctx }
+
+func (m *testInboundPublicationMutation) AppendEvent(ctx context.Context, evt events.Event) error {
+	if m.store == nil {
+		return nil
+	}
+	return m.store.AppendEvent(ctx, evt)
+}
+
+func (m *testInboundPublicationMutation) InsertEventDeliveries(ctx context.Context, eventID string, agentIDs []string) error {
+	if m.store == nil {
+		return nil
+	}
+	return m.store.InsertEventDeliveries(ctx, eventID, agentIDs)
+}
+
+func (m *testInboundPublicationMutation) InsertEventDeliveriesWithTargets(ctx context.Context, eventID string, agentIDs []string, _ map[string]events.RouteIdentity) error {
+	return m.InsertEventDeliveries(ctx, eventID, agentIDs)
+}
+
+func (*testInboundPublicationMutation) InsertEventDeliveryRoutes(context.Context, string, []events.DeliveryRoute) error {
+	return nil
+}
+
+func (*testInboundPublicationMutation) UpsertCommittedReplayScope(context.Context, string, runtimereplayclaim.CommittedReplayScope) error {
+	return nil
+}
+
+func (*testInboundPublicationMutation) UpsertPipelineReceipt(context.Context, string, string, *runtimefailures.Envelope) error {
+	return nil
+}
+
+func (*testInboundPublicationMutation) RecordDeadLetter(context.Context, runtimedeadletters.Record) error {
+	return nil
+}
+
+func (m *testInboundPublicationMutation) FinalizeInboundPublication(_ context.Context, finalization runtimeinbound.Finalization) error {
+	m.finalization = finalization
+	m.finalized = true
+	return nil
+}
+
+func runTestInboundPublication(ctx context.Context, eventStore runtimebus.EventStore, request runtimeinbound.Request, inserted bool, fn func(runtimeinbound.Mutation) error) (runtimeinbound.Record, error) {
+	if !inserted {
+		request.AcknowledgementMode = runtimeinbound.AcknowledgementDurableBeforeDispatch
+		return runtimeinbound.Record{Request: request, State: "committed"}, nil
+	}
+	mutation := newTestInboundPublicationMutation(ctx, eventStore)
+	if err := fn(mutation); err != nil {
+		return runtimeinbound.Record{}, err
+	}
+	if !mutation.finalized {
+		return runtimeinbound.Record{}, errors.New("test inbound publication was not finalized")
+	}
+	var routes []events.DeliveryRoute
+	if err := json.Unmarshal(mutation.finalization.RecipientManifest, &routes); err != nil {
+		return runtimeinbound.Record{}, fmt.Errorf("decode test inbound recipient manifest: %w", err)
+	}
+	manifest, fingerprint, count, err := runtimeinbound.CanonicalRecipientManifest(routes)
+	if err != nil {
+		return runtimeinbound.Record{}, err
+	}
+	return runtimeinbound.Record{
+		Request:              request,
+		State:                "committed",
+		RecipientManifest:    manifest,
+		RecipientFingerprint: fingerprint,
+		RecipientCount:       count,
+		PublicationEvent:     mutation.finalization.PublicationEvent,
+		Created:              true,
+	}, nil
+}
+
+func (s *recordingInboundStore) RunInboundPublicationMutation(ctx context.Context, request runtimeinbound.Request, fn func(runtimeinbound.Mutation) error) (runtimeinbound.Record, error) {
+	s.recorded = true
+	s.providerEventID = request.ProviderEventID
+	s.entityID = request.EntityID
+	s.provider = request.Provider
+	record, err := runTestInboundPublication(ctx, s.store, request, s.inserted, fn)
+	if err == nil {
+		s.record = record
+	}
+	return record, err
+}
+
+func (s *recordingInboundStore) LoadInboundPublicationByIdentity(context.Context, string, string, string) (runtimeinbound.Record, bool, error) {
+	return s.record, s.record.State == "committed", nil
+}
+
+func (*recordingInboundStore) ValidateInboundPublicationIntegrity(context.Context) error { return nil }
+
+func (s *rollbackTrackingInboundStore) RunInboundPublicationMutation(ctx context.Context, request runtimeinbound.Request, fn func(runtimeinbound.Mutation) error) (runtimeinbound.Record, error) {
+	s.recorded = true
+	record, err := runTestInboundPublication(ctx, s.store, request, true, fn)
+	if err != nil {
+		s.rolled = true
+	}
+	return record, err
+}
+
+func (*rollbackTrackingInboundStore) LoadInboundPublicationByIdentity(context.Context, string, string, string) (runtimeinbound.Record, bool, error) {
+	return runtimeinbound.Record{}, false, nil
+}
+
+func (*rollbackTrackingInboundStore) ValidateInboundPublicationIntegrity(context.Context) error {
+	return nil
 }
 
 func TestInboundGateway_Returns503AndRollsBackMarkerWhenPublishFails(t *testing.T) {
@@ -2220,7 +2335,7 @@ func TestInboundGateway_ExecutesOnlyCompiledRawAdmissionPolicy(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			store := &recordingInboundStore{inserted: true}
+			store := &recordingInboundStore{inserted: true, store: eventStore}
 			gateway := NewInboundGateway(bus, nil, nil, store)
 			gateway.SetCredentialStore(identityInboundCredentialStore{})
 			req := httptest.NewRequest(http.MethodPost, "/webhooks/partner/partner-events", strings.NewReader(string(body)))
@@ -2275,7 +2390,7 @@ func TestInboundGateway_PreservesExactEmptyBodyForCompiledAdmission(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
-	store := &recordingInboundStore{inserted: true}
+	store := &recordingInboundStore{inserted: true, store: eventStore}
 	gateway := NewInboundGateway(bus, nil, nil, store)
 	gateway.SetCredentialStore(identityInboundCredentialStore{})
 	req := httptest.NewRequest(http.MethodPost, "/webhooks/partner/partner-events", nil)
@@ -2309,7 +2424,7 @@ func TestInboundGateway_PreservesExactEmptyBodyForCompiledAdmission(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
-	jsonStore := &recordingInboundStore{inserted: true}
+	jsonStore := &recordingInboundStore{inserted: true, store: eventStore}
 	jsonGateway := NewInboundGateway(bus, nil, nil, jsonStore)
 	jsonReq := httptest.NewRequest(http.MethodPost, "/webhooks/json/json-events", nil)
 	jsonRec := httptest.NewRecorder()

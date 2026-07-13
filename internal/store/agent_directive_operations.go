@@ -57,6 +57,7 @@ func (s *PostgresStore) ReserveDirectiveOperation(ctx context.Context, req runti
 				return fmt.Errorf("remove legacy directive idempotency projection: %w", err)
 			}
 		}
+		txctx = withDiagnosticDirectOwner(txctx, diagnosticDirectAgentDirective)
 		if err := s.AppendEventTx(txctx, tx, req.Event); err != nil {
 			return err
 		}
@@ -104,6 +105,7 @@ func (s *SQLiteRuntimeStore) ReserveDirectiveOperation(ctx context.Context, req 
 				return fmt.Errorf("remove legacy sqlite directive idempotency projection: %w", err)
 			}
 		}
+		txctx = withDiagnosticDirectOwner(txctx, diagnosticDirectAgentDirective)
 		if err := s.AppendEventTx(txctx, tx, req.Event); err != nil {
 			return err
 		}

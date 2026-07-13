@@ -1015,7 +1015,7 @@ func countAPIIdempotencyRows(t *testing.T, db *sql.DB) int {
 
 func mailboxItemDecidedPayloadValidator(t *testing.T, schema map[string]any) runtimebus.PayloadValidator {
 	t.Helper()
-	return func(eventType string, payload []byte) error {
+	return func(_ context.Context, eventType string, payload []byte) error {
 		if eventType != "mailbox.item_decided" {
 			return nil
 		}
@@ -1155,9 +1155,13 @@ func (f interceptorFunc) Intercept(ctx context.Context, evt events.Event) (bool,
 	return f(ctx, evt)
 }
 
-func seedActiveAPIV1RuntimeBusAgent(t *testing.T, ctx context.Context, pg *store.PostgresStore, agentID string) {
+type activeAPIV1RuntimeBusAgentStore interface {
+	UpsertAgent(context.Context, runtimemanager.PersistedAgent) error
+}
+
+func seedActiveAPIV1RuntimeBusAgent(t *testing.T, ctx context.Context, owner activeAPIV1RuntimeBusAgentStore, agentID string) {
 	t.Helper()
-	if err := pg.UpsertAgent(ctx, runtimemanager.PersistedAgent{
+	if err := owner.UpsertAgent(ctx, runtimemanager.PersistedAgent{
 		Config: runtimeactors.AgentConfig{
 			ID:     agentID,
 			Role:   "observer",

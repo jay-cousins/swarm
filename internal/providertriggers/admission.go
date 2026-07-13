@@ -473,6 +473,53 @@ func (p InboundAdmissionPlan) acceptExplicitRaw(req Request) (Delivery, error) {
 	}, nil
 }
 
+// SemanticDeliveryProjection returns the retry-stable provider-owned facts for
+// one admitted delivery. Receipt time, user agent, and other transport-local
+// observations are deliberately excluded.
+func (p InboundAdmissionPlan) SemanticDeliveryProjection(delivery Delivery) (map[string]any, error) {
+	payload, err := cloneSemanticProjectionMap(delivery.Payload)
+	if err != nil {
+		return nil, err
+	}
+	if p.manifest != nil {
+		delete(payload, "received_at")
+		if rawHeaders, ok := payload["headers"].(map[string]any); ok {
+			stableHeaders := make(map[string]any)
+			for key, source := range p.manifest.Metadata {
+				switch strings.TrimSpace(source) {
+				case "delivery_id", "event_type":
+					if value, exists := rawHeaders[key]; exists {
+						stableHeaders[key] = value
+					}
+				}
+			}
+			payload["headers"] = stableHeaders
+		}
+	}
+	return map[string]any{
+		"provider":            NormalizeProviderName(p.provider),
+		"provider_event_id":   strings.TrimSpace(delivery.ProviderEventID),
+		"provider_event_type": NormalizeEventToken(delivery.ProviderEventType),
+		"event_name":          strings.TrimSpace(string(delivery.EventName)),
+		"payload":             payload,
+	}, nil
+}
+
+func cloneSemanticProjectionMap(in map[string]any) (map[string]any, error) {
+	if in == nil {
+		return map[string]any{}, nil
+	}
+	raw, err := json.Marshal(in)
+	if err != nil {
+		return nil, fmt.Errorf("marshal provider delivery semantic projection: %w", err)
+	}
+	out := map[string]any{}
+	if err := json.Unmarshal(raw, &out); err != nil {
+		return nil, fmt.Errorf("decode provider delivery semantic projection: %w", err)
+	}
+	return out, nil
+}
+
 func verifyRawAuthentication(auth RawAuthenticationDeclaration, secret string, headers http.Header, body []byte) error {
 	if auth.Kind == "none" {
 		return nil

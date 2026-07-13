@@ -115,6 +115,72 @@ func (c *agentLifecycleCoordinator) register(ctx context.Context, rec PersistedA
 	return nil
 }
 
+func (c *agentLifecycleCoordinator) persistRegistration(ctx context.Context, rec PersistedAgent) (AgentLifecycleTransitionResult, error) {
+	if c == nil || c.store == nil {
+		return AgentLifecycleTransitionResult{}, fmt.Errorf("agent lifecycle persistence is required")
+	}
+	agentID := strings.TrimSpace(rec.Config.ID)
+	revision, err := lifecycleConfigRevision(rec)
+	if err != nil {
+		return AgentLifecycleTransitionResult{}, err
+	}
+	epoch := rec.LifecycleEpoch
+	if epoch <= 0 {
+		epoch = runtimebus.CurrentRuntimeEpoch()
+	}
+	generation := rec.LifecycleGeneration
+	if generation == 0 {
+		generation = 1
+	}
+	return c.store.CommitAgentLifecycleTransition(ctx, AgentLifecycleTransition{
+		OperationID: uuid.NewString(), OperationKind: "spawn", AgentID: agentID, Trigger: "spawn",
+		RequestHash: lifecycleRequestHash("spawn", agentID, revision), TargetEpoch: epoch,
+		TargetGeneration: generation, TargetPhase: AgentLifecycleRegistered,
+		ConfigRevision: revision, RunMode: AgentRunModeStopped, Agent: &rec, Now: time.Now().UTC(),
+	})
+}
+
+func (c *agentLifecycleCoordinator) registerCommitted(rec PersistedAgent, result AgentLifecycleTransitionResult) error {
+	if c == nil {
+		return fmt.Errorf("agent lifecycle coordinator is required")
+	}
+	agentID := strings.TrimSpace(rec.Config.ID)
+	revision := strings.TrimSpace(result.ConfigRevision)
+	if revision == "" {
+		var err error
+		revision, err = lifecycleConfigRevision(rec)
+		if err != nil {
+			return err
+		}
+	}
+	epoch := result.RuntimeEpoch
+	if epoch <= 0 {
+		epoch = runtimebus.CurrentRuntimeEpoch()
+	}
+	generation := result.Generation
+	if generation == 0 {
+		generation = 1
+	}
+	phase := result.Phase
+	if phase == "" {
+		phase = AgentLifecycleRegistered
+	}
+	mode := result.RunMode
+	if mode == "" {
+		mode = AgentRunModeStopped
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if _, exists := c.cells[agentID]; exists {
+		return fmt.Errorf("%w: %s", ErrAgentAlreadyExists, agentID)
+	}
+	c.cells[agentID] = &agentLifecycleCell{
+		epoch: epoch, generation: generation, phase: phase,
+		configRevision: revision, runMode: mode,
+	}
+	return nil
+}
+
 func (c *agentLifecycleCoordinator) unregisterLocal(agentID string) {
 	if c == nil {
 		return

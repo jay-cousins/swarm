@@ -10,6 +10,7 @@ import (
 
 	runtimefailures "github.com/division-sh/swarm/internal/runtime/failures"
 	runtimemanager "github.com/division-sh/swarm/internal/runtime/manager"
+	runtimepipeline "github.com/division-sh/swarm/internal/runtime/pipeline"
 	"github.com/google/uuid"
 )
 
@@ -94,11 +95,25 @@ func (s *PostgresStore) CommitAgentLifecycleTransition(ctx context.Context, req 
 	if err := validateLifecycleTransition(req); err != nil {
 		return runtimemanager.AgentLifecycleTransitionResult{}, err
 	}
+	if tx, ok := runtimepipeline.PipelineSQLTxFromContext(ctx); ok && tx != nil {
+		return commitPostgresAgentLifecycleTransitionTx(ctx, tx, req)
+	}
 	tx, err := s.DB.BeginTx(ctx, nil)
 	if err != nil {
 		return runtimemanager.AgentLifecycleTransitionResult{}, err
 	}
 	defer tx.Rollback()
+	result, err := commitPostgresAgentLifecycleTransitionTx(ctx, tx, req)
+	if err != nil {
+		return runtimemanager.AgentLifecycleTransitionResult{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return runtimemanager.AgentLifecycleTransitionResult{}, err
+	}
+	return result, nil
+}
+
+func commitPostgresAgentLifecycleTransitionTx(ctx context.Context, tx *sql.Tx, req runtimemanager.AgentLifecycleTransition) (runtimemanager.AgentLifecycleTransitionResult, error) {
 	if _, err := tx.ExecContext(ctx, `SELECT pg_advisory_xact_lock(hashtext($1))`, "swarm:agent-lifecycle:"+req.AgentID); err != nil {
 		return runtimemanager.AgentLifecycleTransitionResult{}, err
 	}
@@ -117,9 +132,6 @@ func (s *PostgresStore) CommitAgentLifecycleTransition(ctx context.Context, req 
 		return runtimemanager.AgentLifecycleTransitionResult{}, err
 	}
 	if err := insertPostgresLifecycleEvidence(ctx, tx, req, result); err != nil {
-		return runtimemanager.AgentLifecycleTransitionResult{}, err
-	}
-	if err := tx.Commit(); err != nil {
 		return runtimemanager.AgentLifecycleTransitionResult{}, err
 	}
 	return result, nil

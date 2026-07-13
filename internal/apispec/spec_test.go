@@ -18,17 +18,17 @@ func TestPlatformAPISpecValidationCoverage(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Validate() error = %v", err)
 	}
-	if report.MethodCount != 59 {
-		t.Fatalf("method count = %d, want 59", report.MethodCount)
+	if report.MethodCount != 62 {
+		t.Fatalf("method count = %d, want 62", report.MethodCount)
 	}
-	if report.SchemaCount != 116 {
-		t.Fatalf("schema count = %d, want 116", report.SchemaCount)
+	if report.SchemaCount != 117 {
+		t.Fatalf("schema count = %d, want 117", report.SchemaCount)
 	}
-	if report.ErrorCodeCount != 43 {
-		t.Fatalf("error code count = %d, want 43", report.ErrorCodeCount)
+	if report.ErrorCodeCount != 44 {
+		t.Fatalf("error code count = %d, want 44", report.ErrorCodeCount)
 	}
-	if report.MutatingMethodCount != 23 {
-		t.Fatalf("mutating method count = %d, want 23", report.MutatingMethodCount)
+	if report.MutatingMethodCount != 26 {
+		t.Fatalf("mutating method count = %d, want 26", report.MutatingMethodCount)
 	}
 	if report.SubscriptionMethodCnt != 4 {
 		t.Fatalf("subscription method count = %d, want 4", report.SubscriptionMethodCnt)
@@ -81,14 +81,14 @@ func TestGeneratedOpenRPCArtifactMatchesPlatformSpec(t *testing.T) {
 	if err := json.Unmarshal(artifact, &doc); err != nil {
 		t.Fatalf("unmarshal openrpc artifact: %v", err)
 	}
-	if len(doc.Methods) != 59 {
-		t.Fatalf("generated OpenRPC methods = %d, want 59", len(doc.Methods))
+	if len(doc.Methods) != 62 {
+		t.Fatalf("generated OpenRPC methods = %d, want 62", len(doc.Methods))
 	}
-	if len(doc.Components.Schemas) != 116 {
-		t.Fatalf("generated OpenRPC schemas = %d, want 116", len(doc.Components.Schemas))
+	if len(doc.Components.Schemas) != 117 {
+		t.Fatalf("generated OpenRPC schemas = %d, want 117", len(doc.Components.Schemas))
 	}
-	if len(doc.Components.Errors) != 43 {
-		t.Fatalf("generated OpenRPC errors = %d, want 43", len(doc.Components.Errors))
+	if len(doc.Components.Errors) != 44 {
+		t.Fatalf("generated OpenRPC errors = %d, want 44", len(doc.Components.Errors))
 	}
 	assertGeneratedMethodsOmitExamplesUnderPolicy(t, api, artifact)
 	assertGeneratedMethodsOmitRPCDiscoverUnderPolicy(t, api, doc)

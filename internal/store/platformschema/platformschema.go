@@ -142,6 +142,12 @@ func platformTableOrder(name string) int {
 		return 3
 	case "runs":
 		return 5
+	case "standing_services":
+		return 6
+	case "standing_service_generations":
+		return 7
+	case "standing_service_journal":
+		return 8
 	case "events":
 		return 10
 	case "agent_directive_operations":
@@ -150,6 +156,8 @@ func platformTableOrder(name string) int {
 		return 12
 	case "activity_attempts":
 		return 13
+	case "inbound_publications":
+		return 14
 	case "run_fork_selected_contract_bindings":
 		return 15
 	case "run_fork_selected_contract_executions":

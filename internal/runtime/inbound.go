@@ -16,33 +16,31 @@ import (
 	runtimebus "github.com/division-sh/swarm/internal/runtime/bus"
 	runtimecorrelation "github.com/division-sh/swarm/internal/runtime/correlation"
 	runtimecredentials "github.com/division-sh/swarm/internal/runtime/credentials"
+	runtimeinbound "github.com/division-sh/swarm/internal/runtime/inboundpublication"
 	runtimeingress "github.com/division-sh/swarm/internal/runtime/ingress"
 	"github.com/division-sh/swarm/internal/runtime/semanticview"
-	"github.com/google/uuid"
 )
 
 const inboundWebhookMaxBodyBytes = 1 << 20
 
-type InboundPersistence interface {
-	RecordInboundEvent(ctx context.Context, providerEventID, entityID, provider string) (bool, error)
-	PurgeInboundEventsBefore(ctx context.Context, before time.Time, limit int) (int, error)
-}
-
-type InboundFailureRollback interface {
-	DeleteInboundEvent(ctx context.Context, providerEventID, entityID, provider string) error
-}
+type InboundPersistence = runtimeinbound.Runner
 
 type InboundTarget struct {
-	BundleHash    string
-	FlowID        string
-	RunID         string
-	FlowInstance  string
-	EntityID      string
-	EntitySlug    string
-	Alias         string
-	Provider      string
-	SigningSecret string
-	AdmissionPlan providertriggers.InboundAdmissionPlan
+	BundleHash          string
+	ServiceID           string
+	PackageKey          string
+	FlowID              string
+	RunID               string
+	Generation          int64
+	PublicationSequence int64
+	InstanceID          string
+	FlowInstance        string
+	EntityID            string
+	EntitySlug          string
+	Alias               string
+	Provider            string
+	SigningSecret       string
+	AdmissionPlan       providertriggers.InboundAdmissionPlan
 }
 
 func (t InboundTarget) EffectiveEntityID() string {
@@ -245,58 +243,124 @@ func (g *InboundGateway) handleResolvedWebhook(w http.ResponseWriter, r *http.Re
 		requestCtx = runtimecorrelation.WithRunID(requestCtx, target.RunID)
 	}
 
-	if g.store != nil {
-		inserted, err := g.store.RecordInboundEvent(requestCtx, providerEventID, entityID, provider)
-		if err != nil {
-			http.Error(w, "record inbound failed", http.StatusInternalServerError)
-			return
-		}
-		if !inserted {
-			writeJSON(w, http.StatusOK, map[string]any{
-				"status":              "duplicate",
-				"provider":            provider,
-				"provider_event_id":   providerEventID,
-				"provider_event_type": delivery.ProviderEventType,
-				"event_name":          string(delivery.EventName),
-			})
-			return
-		}
+	if g.store == nil || g.bus == nil {
+		http.Error(w, "inbound publication owner unavailable", http.StatusServiceUnavailable)
+		return
 	}
 
 	pubType, pubPayload := delivery.EventName, delivery.Payload
 	envelopeBytes := mustJSON(pubPayload)
-	if g.bus != nil {
-		pubCtx := runtimebus.WithCurrentRuntimeEpoch(requestCtx)
-		envelope := events.EnvelopeForTargetRoute(events.EventEnvelope{}, events.RouteIdentity{EntityID: entityID, FlowInstance: target.FlowInstance})
-		published := events.NewRootIngressEvent(uuid.NewString(), pubType, "inbound-gateway", "", envelopeBytes, 0, target.RunID, "", envelope, now)
-		var err error
-		if delivery.AcknowledgeBeforeDispatch {
-			err = g.bus.PublishAcknowledged(pubCtx, published)
-		} else {
-			err = g.bus.Publish(pubCtx, published)
+	projection, err := target.AdmissionPlan.SemanticDeliveryProjection(delivery)
+	if err != nil {
+		http.Error(w, "derive inbound semantic projection failed", http.StatusInternalServerError)
+		return
+	}
+	projection["target"] = map[string]any{
+		"entity_id":         entityID,
+		"stable_service_id": strings.TrimSpace(target.ServiceID),
+		"package_key":       strings.TrimSpace(target.PackageKey),
+		"flow_id":           strings.TrimSpace(target.FlowID),
+		"instance_id":       strings.TrimSpace(target.InstanceID),
+	}
+	fingerprint, err := runtimeinbound.SemanticFingerprint(projection)
+	if err != nil {
+		http.Error(w, "derive inbound semantic fingerprint failed", http.StatusInternalServerError)
+		return
+	}
+	publicationID, markerEventID, publicationEventID := runtimeinbound.DeterministicIDs(provider, entityID, providerEventID)
+	ackMode := runtimeinbound.AcknowledgementAfterPublish
+	if delivery.AcknowledgeBeforeDispatch {
+		ackMode = runtimeinbound.AcknowledgementDurableBeforeDispatch
+	}
+	request := runtimeinbound.Request{
+		PublicationID:               publicationID,
+		Provider:                    provider,
+		EntityID:                    entityID,
+		ProviderEventID:             providerEventID,
+		SemanticFingerprint:         fingerprint,
+		SemanticProjectionVersion:   runtimeinbound.SemanticProjectionVersion,
+		StableServiceID:             target.ServiceID,
+		PackageKey:                  target.PackageKey,
+		FlowID:                      target.FlowID,
+		InstanceID:                  target.InstanceID,
+		TargetAlias:                 target.Alias,
+		TargetFlowInstance:          target.FlowInstance,
+		ExpectedPublicationSequence: target.PublicationSequence,
+		ResolvedRunID:               target.RunID,
+		MarkerEventID:               markerEventID,
+		PublicationEventID:          publicationEventID,
+		AcknowledgementMode:         ackMode,
+		OriginalReceivedAt:          now,
+		OriginalUserAgent:           r.UserAgent(),
+		OriginalTransportMetadata: mustJSON(map[string]any{
+			"method":       r.Method,
+			"content_type": r.Header.Get("Content-Type"),
+		}),
+	}
+	pubCtx := runtimebus.WithCurrentRuntimeEpoch(requestCtx)
+	envelope := events.EnvelopeForFlowInstance(events.EnvelopeForEntityID(events.EventEnvelope{}, entityID), target.FlowInstance)
+	if target.AdmissionPlan.PolicySource() == providertriggers.PolicySourceRawDeclaration {
+		envelope = events.EnvelopeForTargetRoute(envelope, events.RouteIdentity{EntityID: entityID, FlowInstance: target.FlowInstance})
+	}
+	published := events.NewRootIngressEvent(publicationEventID, pubType, "inbound-gateway", "", envelopeBytes, 0, target.RunID, "", envelope, now)
+	evidencePayload := mustJSON(map[string]any{
+		"publication_id":       publicationID,
+		"publication_event_id": publicationEventID,
+		"provider":             provider,
+		"provider_event_id":    providerEventID,
+		"entity_id":            entityID,
+	})
+	evidence := events.NewDiagnosticDirectEvent(markerEventID, events.EventType("platform.inbound_recorded"), "runtime", "", evidencePayload, 0, target.RunID, "", events.EnvelopeForEntityID(events.EventEnvelope{}, entityID), now)
+	var prepared runtimebus.PreparedPublish
+	record, err := g.store.RunInboundPublicationMutation(pubCtx, request, func(mutation runtimeinbound.Mutation) error {
+		var prepareErr error
+		prepared, prepareErr = g.bus.PreparePublishInMutation(mutation.Context(), published)
+		if prepareErr != nil {
+			return prepareErr
 		}
-		if err != nil {
-			if g.logger != nil {
-				handleRuntimeLogPersistenceError("inbound-gateway", "publish_failed", g.logger.Error(requestCtx, "inbound-gateway", "publish_failed", map[string]any{
-					"provider":          provider,
-					"entity_id":         entityID,
-					"provider_event_id": providerEventID,
-				}, err))
-			}
-			if rollback, ok := g.store.(InboundFailureRollback); ok && rollback != nil {
-				if rollbackErr := rollback.DeleteInboundEvent(requestCtx, providerEventID, entityID, provider); rollbackErr != nil {
-					if g.logger != nil {
-						handleRuntimeLogPersistenceError("inbound-gateway", "rollback_failed", g.logger.Error(requestCtx, "inbound-gateway", "rollback_failed", map[string]any{
-							"provider":          provider,
-							"entity_id":         entityID,
-							"provider_event_id": providerEventID,
-						}, rollbackErr))
-					}
-				}
-			}
-			http.Error(w, "publish inbound failed", http.StatusServiceUnavailable)
-			return
+		manifest, _, _, manifestErr := runtimeinbound.CanonicalRecipientManifest(prepared.DeliveryRoutes())
+		if manifestErr != nil {
+			return manifestErr
 		}
+		return mutation.FinalizeInboundPublication(mutation.Context(), runtimeinbound.Finalization{
+			EvidenceEvent: evidence, PublicationEvent: prepared.Event, RecipientManifest: manifest,
+		})
+	})
+	if err != nil {
+		if g.logger != nil {
+			handleRuntimeLogPersistenceError("inbound-gateway", "publish_failed", g.logger.Error(requestCtx, "inbound-gateway", "publish_failed", map[string]any{
+				"provider": provider, "entity_id": entityID, "provider_event_id": providerEventID,
+			}, err))
+		}
+		http.Error(w, "publish inbound failed", http.StatusServiceUnavailable)
+		return
+	}
+	if !record.Created {
+		writeJSON(w, http.StatusOK, map[string]any{
+			"status": "duplicate", "provider": provider, "provider_event_id": providerEventID,
+			"provider_event_type": delivery.ProviderEventType, "event_name": string(delivery.EventName),
+			"publication_id": record.PublicationID, "event_id": record.PublicationEventID,
+		})
+		return
+	}
+	_, committedFingerprint, committedCount, err := runtimeinbound.CanonicalRecipientManifest(prepared.DeliveryRoutes())
+	if err != nil || committedFingerprint != record.RecipientFingerprint || committedCount != record.RecipientCount {
+		if err == nil {
+			err = fmt.Errorf("committed inbound recipient manifest does not match the prepared publication")
+		}
+		if g.logger != nil {
+			handleRuntimeLogPersistenceError("inbound-gateway", "committed_manifest_mismatch", g.logger.Error(requestCtx, "inbound-gateway", "committed_manifest_mismatch", map[string]any{
+				"publication_id": record.PublicationID, "event_id": record.PublicationEventID,
+			}, err))
+		}
+		http.Error(w, "publish inbound failed", http.StatusServiceUnavailable)
+		return
+	}
+	if record.AcknowledgementMode == runtimeinbound.AcknowledgementDurableBeforeDispatch {
+		g.bus.DispatchPreparedPublishAsync(pubCtx, prepared)
+	} else if err := g.bus.DispatchPreparedPublish(pubCtx, prepared); err != nil {
+		http.Error(w, "publish inbound failed", http.StatusServiceUnavailable)
+		return
 	}
 
 	writeJSON(w, http.StatusAccepted, map[string]any{
@@ -307,6 +371,8 @@ func (g *InboundGateway) handleResolvedWebhook(w http.ResponseWriter, r *http.Re
 		"provider_event_id":   providerEventID,
 		"provider_event_type": delivery.ProviderEventType,
 		"event_name":          string(delivery.EventName),
+		"publication_id":      record.PublicationID,
+		"event_id":            record.PublicationEventID,
 	})
 }
 

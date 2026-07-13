@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -23,10 +24,14 @@ import (
 	runtimecontracts "github.com/division-sh/swarm/internal/runtime/contracts"
 	runtimeactors "github.com/division-sh/swarm/internal/runtime/core/actors"
 	runtimecorrelation "github.com/division-sh/swarm/internal/runtime/correlation"
+	runtimedeadletters "github.com/division-sh/swarm/internal/runtime/deadletters"
+	runtimefailures "github.com/division-sh/swarm/internal/runtime/failures"
+	runtimeinbound "github.com/division-sh/swarm/internal/runtime/inboundpublication"
 	runtimellm "github.com/division-sh/swarm/internal/runtime/llm"
 	llmselection "github.com/division-sh/swarm/internal/runtime/llm/selection"
 	runtimemanager "github.com/division-sh/swarm/internal/runtime/manager"
 	runtimepipeline "github.com/division-sh/swarm/internal/runtime/pipeline"
+	runtimereplayclaim "github.com/division-sh/swarm/internal/runtime/replayclaim"
 	"github.com/division-sh/swarm/internal/runtime/semanticview"
 	workspace "github.com/division-sh/swarm/internal/runtime/workspace"
 	"github.com/division-sh/swarm/internal/store"
@@ -225,6 +230,7 @@ func TestRuntimeProcessInboundHandlerSelectsExactLoadedContext(t *testing.T) {
 	makeContext := func(hash, alias, runID, entityID string) (runtimepkg.BundleContext, *processIngressProofStore, *processIngressEventStore) {
 		persistence := &processIngressProofStore{}
 		eventsStore := &processIngressEventStore{}
+		persistence.store = eventsStore
 		bus, err := runtimebus.NewEventBus(eventsStore)
 		if err != nil {
 			t.Fatalf("NewEventBus(%s): %v", alias, err)
@@ -272,99 +278,6 @@ func TestRuntimeProcessInboundHandlerSelectsExactLoadedContext(t *testing.T) {
 	}
 	if got := eventsB.events[0].RunID(); got != contextB.StandingTargets[0].RunID {
 		t.Fatalf("selected event run_id = %q, want %q", got, contextB.StandingTargets[0].RunID)
-	}
-}
-
-func TestRuntimeProjectSupervisorRejectsChangedStandingBundleWithoutMutation(t *testing.T) {
-	standingBundle := &runtimecontracts.WorkflowContractBundle{PackageTree: []runtimecontracts.LoadedProjectPackage{{
-		Manifest: runtimecontracts.ProjectPackageDocument{Flows: []runtimecontracts.ProjectFlowRef{{
-			ID: "service", Mode: runtimecontracts.FlowModeSingleton, Activation: runtimecontracts.ProjectFlowActivationStanding,
-		}}},
-	}}}
-	source := semanticview.Wrap(standingBundle)
-	bus, err := runtimebus.NewEventBus(nil)
-	if err != nil {
-		t.Fatalf("NewEventBus: %v", err)
-	}
-	oldRT := &runtimepkg.Runtime{Bus: bus}
-	oldHash := "bundle-v1:sha256:" + strings.Repeat("a", 64)
-	newHash := "bundle-v1:sha256:" + strings.Repeat("b", 64)
-	oldTarget := runtimepkg.StandingTarget{
-		BundleHash: oldHash, FlowID: "service", Alias: "chat", Provider: "telegram",
-		RunID: "41000000-0000-0000-0000-000000000001", FlowInstance: "service/a",
-		EntityID: "41000000-0000-0000-0000-000000000002", SigningSecret: "webhook_signing.telegram",
-	}
-	catalog := testProviderTriggerCatalog(t)
-	oldTarget.AdmissionPlan, err = catalog.CompileAdmission(providertriggers.CompileAdmissionRequest{Alias: "chat", Provider: "telegram", SigningSecret: "webhook_signing.telegram"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	installed, err := catalog.InstalledCapabilitySubjects()
-	if err != nil {
-		t.Fatal(err)
-	}
-	manager, err := runtimepkg.NewRuntimeContextManagerWithAdmission(nil, runtimepkg.ProcessAdmissionState{GenerationID: catalog.GenerationID(), InstalledSubjects: installed}, runtimepkg.BundleContext{
-		BundleHash: oldHash, Source: source, Runtime: oldRT, StandingTargets: []runtimepkg.StandingTarget{oldTarget},
-	})
-	if err != nil {
-		t.Fatalf("NewRuntimeContextManager: %v", err)
-	}
-	var ready atomic.Bool
-	ready.Store(true)
-	supervisor := &runtimeProjectSupervisor{
-		ready: &ready, currentRoot: "/tmp/current", currentSource: source,
-		currentBundle: standingBundle, currentRT: oldRT,
-		currentBundleSourceFact: runtimecorrelation.BundleSourceFact{BundleHash: oldHash, BundleSource: storerunlifecycle.BundleSourcePersisted},
-		runtimeContexts:         manager,
-	}
-	for attempt := 0; attempt < 2; attempt++ {
-		err := supervisor.rejectChangedStandingBundle(newHash)
-		if err == nil || !strings.Contains(err.Error(), oldHash) || !strings.Contains(err.Error(), newHash) || !strings.Contains(err.Error(), "explicit future reset/migration") {
-			t.Fatalf("attempt %d changed-bundle error = %v", attempt+1, err)
-		}
-	}
-	if !ready.Load() || supervisor.CurrentRuntime() != oldRT || supervisor.CurrentProject().ProjectDir != "/tmp/current" {
-		t.Fatalf("changed-bundle rejection mutated supervisor: ready=%v runtime=%p status=%#v", ready.Load(), supervisor.CurrentRuntime(), supervisor.CurrentProject())
-	}
-	lookup := manager.LookupIngress("chat", "telegram")
-	if !lookup.Loaded() || lookup.Context.Runtime != oldRT || lookup.Target.RunID != oldTarget.RunID {
-		t.Fatalf("old context after changed-bundle rejection = %#v", lookup)
-	}
-}
-
-func TestRuntimeProjectSupervisorRejectsChangedStandingBundleWithoutIngress(t *testing.T) {
-	standingBundle := &runtimecontracts.WorkflowContractBundle{PackageTree: []runtimecontracts.LoadedProjectPackage{{
-		Manifest: runtimecontracts.ProjectPackageDocument{Flows: []runtimecontracts.ProjectFlowRef{{
-			ID: "scheduler", Mode: runtimecontracts.FlowModeSingleton, Activation: runtimecontracts.ProjectFlowActivationStanding,
-		}}},
-	}}}
-	source := semanticview.Wrap(standingBundle)
-	bus, err := runtimebus.NewEventBus(nil)
-	if err != nil {
-		t.Fatalf("NewEventBus: %v", err)
-	}
-	oldRT := &runtimepkg.Runtime{Bus: bus}
-	oldHash := "bundle-v1:sha256:" + strings.Repeat("d", 64)
-	newHash := "bundle-v1:sha256:" + strings.Repeat("e", 64)
-	manager, err := runtimepkg.NewRuntimeContextManager(nil, runtimepkg.BundleContext{
-		BundleHash: oldHash, Source: source, Runtime: oldRT,
-	})
-	if err != nil {
-		t.Fatalf("NewRuntimeContextManager: %v", err)
-	}
-	var ready atomic.Bool
-	ready.Store(true)
-	supervisor := &runtimeProjectSupervisor{
-		ready: &ready, currentRoot: "/tmp/current", currentSource: source,
-		currentBundle: standingBundle, currentRT: oldRT,
-		currentBundleSourceFact: runtimecorrelation.BundleSourceFact{BundleHash: oldHash, BundleSource: storerunlifecycle.BundleSourcePersisted},
-		runtimeContexts:         manager,
-	}
-	if err := supervisor.rejectChangedStandingBundle(newHash); err == nil || !strings.Contains(err.Error(), "explicit future reset/migration") {
-		t.Fatalf("changed standing bundle without ingress error = %v", err)
-	}
-	if !ready.Load() || supervisor.CurrentRuntime() != oldRT || supervisor.CurrentProject().ProjectDir != "/tmp/current" {
-		t.Fatalf("changed standing bundle without ingress mutated supervisor: ready=%v runtime=%p status=%#v", ready.Load(), supervisor.CurrentRuntime(), supervisor.CurrentProject())
 	}
 }
 
@@ -438,6 +351,7 @@ func TestRuntimeProjectSupervisorChangedNonStandingBundleReplacesManagerContext(
 	oldFact := runtimecorrelation.BundleSourceFact{BundleHash: oldHash, BundleSource: storerunlifecycle.BundleSourcePersisted}
 	newFact := runtimecorrelation.BundleSourceFact{BundleHash: newHash, BundleSource: storerunlifecycle.BundleSourcePersisted}
 	newIdentity := runtimecontracts.BundleIdentity{BundleHash: newHash}
+	oldRT.Options = runtimepkg.RuntimeOptions{WorkflowModule: stubWorkflowModule{source: oldSource}, BundleSourceFact: oldFact}
 	newRT.Options = runtimepkg.RuntimeOptions{WorkflowModule: stubWorkflowModule{source: newSource}, BundleSourceFact: newFact}
 	manager, err := runtimepkg.NewRuntimeContextManager(nil, runtimepkg.BundleContext{
 		BundleHash: oldHash, BundleSourceFact: oldFact, Source: oldSource, Runtime: oldRT,
@@ -493,7 +407,7 @@ func TestRuntimeProjectSupervisorReplacementPublishesDowntimeAcrossPublicSurface
 	}
 	hash := runtimeContextTestHash("d")
 	fact := runtimecorrelation.BundleSourceFact{BundleHash: hash, BundleSource: storerunlifecycle.BundleSourceEphemeral}
-	oldRT := &runtimepkg.Runtime{Bus: oldBus}
+	oldRT := &runtimepkg.Runtime{Bus: oldBus, Options: runtimepkg.RuntimeOptions{WorkflowModule: stubWorkflowModule{source: source}, BundleSourceFact: fact}}
 	newRT := &runtimepkg.Runtime{Bus: newBus, Options: runtimepkg.RuntimeOptions{WorkflowModule: stubWorkflowModule{source: source}, BundleSourceFact: fact}}
 	manager, err := runtimepkg.NewRuntimeContextManager(nil, runtimepkg.BundleContext{BundleHash: hash, BundleSourceFact: fact, Source: source, Runtime: oldRT})
 	if err != nil {
@@ -1038,16 +952,75 @@ func (processIngressCredentialStore) Set(context.Context, string, string) error 
 func (processIngressCredentialStore) List(context.Context) ([]string, error)    { return nil, nil }
 func (processIngressCredentialStore) Delete(context.Context, string) error      { return nil }
 
-type processIngressProofStore struct{ recorded bool }
+type processIngressProofStore struct {
+	recorded bool
+	store    runtimebus.EventStore
+}
 
-func (s *processIngressProofStore) RecordInboundEvent(context.Context, string, string, string) (bool, error) {
+type processIngressMutation struct {
+	ctx          context.Context
+	store        runtimebus.EventStore
+	finalization runtimeinbound.Finalization
+	finalized    bool
+}
+
+func (m *processIngressMutation) Context() context.Context { return m.ctx }
+func (m *processIngressMutation) AppendEvent(ctx context.Context, evt events.Event) error {
+	return m.store.AppendEvent(ctx, evt)
+}
+func (m *processIngressMutation) InsertEventDeliveries(ctx context.Context, eventID string, agentIDs []string) error {
+	return m.store.InsertEventDeliveries(ctx, eventID, agentIDs)
+}
+func (m *processIngressMutation) InsertEventDeliveriesWithTargets(ctx context.Context, eventID string, agentIDs []string, _ map[string]events.RouteIdentity) error {
+	return m.InsertEventDeliveries(ctx, eventID, agentIDs)
+}
+func (*processIngressMutation) InsertEventDeliveryRoutes(context.Context, string, []events.DeliveryRoute) error {
+	return nil
+}
+func (*processIngressMutation) UpsertCommittedReplayScope(context.Context, string, runtimereplayclaim.CommittedReplayScope) error {
+	return nil
+}
+func (*processIngressMutation) UpsertPipelineReceipt(context.Context, string, string, *runtimefailures.Envelope) error {
+	return nil
+}
+func (*processIngressMutation) RecordDeadLetter(context.Context, runtimedeadletters.Record) error {
+	return nil
+}
+
+func (m *processIngressMutation) FinalizeInboundPublication(_ context.Context, finalization runtimeinbound.Finalization) error {
+	m.finalization = finalization
+	m.finalized = true
+	return nil
+}
+
+func (s *processIngressProofStore) RunInboundPublicationMutation(ctx context.Context, request runtimeinbound.Request, fn func(runtimeinbound.Mutation) error) (runtimeinbound.Record, error) {
 	s.recorded = true
-	return true, nil
+	mutation := &processIngressMutation{store: s.store}
+	mutation.ctx = runtimebus.WithEventMutationContext(ctx, mutation)
+	if err := fn(mutation); err != nil {
+		return runtimeinbound.Record{}, err
+	}
+	if !mutation.finalized {
+		return runtimeinbound.Record{}, errors.New("process ingress publication was not finalized")
+	}
+	var routes []events.DeliveryRoute
+	if err := json.Unmarshal(mutation.finalization.RecipientManifest, &routes); err != nil {
+		return runtimeinbound.Record{}, fmt.Errorf("decode process ingress recipient manifest: %w", err)
+	}
+	manifest, fingerprint, count, err := runtimeinbound.CanonicalRecipientManifest(routes)
+	if err != nil {
+		return runtimeinbound.Record{}, err
+	}
+	return runtimeinbound.Record{
+		Request: request, State: "committed", RecipientManifest: manifest,
+		RecipientFingerprint: fingerprint, RecipientCount: count,
+		PublicationEvent: mutation.finalization.PublicationEvent, Created: true,
+	}, nil
 }
-func (*processIngressProofStore) PurgeInboundEventsBefore(context.Context, time.Time, int) (int, error) {
-	return 0, nil
+func (*processIngressProofStore) LoadInboundPublicationByIdentity(context.Context, string, string, string) (runtimeinbound.Record, bool, error) {
+	return runtimeinbound.Record{}, false, nil
 }
-func (*processIngressProofStore) DeleteInboundEvent(context.Context, string, string, string) error {
+func (*processIngressProofStore) ValidateInboundPublicationIntegrity(context.Context) error {
 	return nil
 }
 

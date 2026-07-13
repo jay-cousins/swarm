@@ -40,7 +40,7 @@ func newRuntimeEventBus(store runtimebus.EventStore, logger *RuntimeLogger, sour
 // this validator is the final pre-persistence guard for every event and the
 // primary guard for ingress/direct/store paths without a producer-surface owner.
 func newRuntimePayloadValidator(logger *RuntimeLogger, schemas map[string]runtimecontracts.EventSchema) runtimebus.PayloadValidator {
-	return func(eventType string, payload []byte) error {
+	return func(ctx context.Context, eventType string, payload []byte) error {
 		eventType = strings.TrimSpace(eventType)
 		if eventType == "" {
 			return nil
@@ -55,7 +55,7 @@ func newRuntimePayloadValidator(logger *RuntimeLogger, schemas map[string]runtim
 		decoded := map[string]any{}
 		if err := json.Unmarshal(payload, &decoded); err != nil {
 			if logger != nil {
-				handleRuntimeLogPersistenceError("event-bus", "payload_validation_json_invalid", logger.Warn(context.Background(), "event-bus", "payload_validation_json_invalid", map[string]any{
+				handleRuntimeLogPersistenceError("event-bus", "payload_validation_json_invalid", logger.Warn(ctx, "event-bus", "payload_validation_json_invalid", map[string]any{
 					"event_type": eventType,
 				}, err))
 			}
@@ -63,7 +63,7 @@ func newRuntimePayloadValidator(logger *RuntimeLogger, schemas map[string]runtim
 		}
 		if err := runtimetools.ValidatePayloadAgainstSchema(schema.Schema, payloadForCanonicalEventValidation(decoded, schema.Schema)); err != nil {
 			if logger != nil {
-				handleRuntimeLogPersistenceError("event-bus", "payload_validation_rejected", logger.Warn(context.Background(), "event-bus", "payload_validation_rejected", map[string]any{
+				handleRuntimeLogPersistenceError("event-bus", "payload_validation_rejected", logger.Warn(ctx, "event-bus", "payload_validation_rejected", map[string]any{
 					"event_type": eventType,
 				}, err))
 			}
