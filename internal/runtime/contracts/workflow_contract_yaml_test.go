@@ -20,6 +20,7 @@ func containsString(values []string, target string) bool {
 }
 
 func TestProjectPackageDocumentDecode_PreservesRequiresAndImportBinds(t *testing.T) {
+	// routing-example-census: parser-only issue=none owner=contracts.project_package_decoder proof=TestProjectPackageDocumentDecode_PreservesRequiresAndImportBinds
 	var doc ProjectPackageDocument
 	if err := yaml.Unmarshal([]byte(`
 name: package-boundary
@@ -608,6 +609,7 @@ extra:
 }
 
 func TestProjectPackageDocumentDecode_RejectsMalformedRequiresAndBindShape(t *testing.T) {
+	// routing-example-census: parser-only issue=none owner=contracts.project_package_decoder proof=TestProjectPackageDocumentDecode_RejectsMalformedRequiresAndBindShape
 	tests := []struct {
 		name    string
 		body    string
@@ -766,6 +768,7 @@ pins:
 }
 
 func TestFlowSchemaDocumentDecode_PreservesInputPinResolutionModes(t *testing.T) {
+	// routing-example-census: parser-only issue=none owner=contracts.flow_schema_decoder proof=TestFlowSchemaDocumentDecode_PreservesInputPinResolutionModes
 	var doc FlowSchemaDocument
 	if err := yaml.Unmarshal([]byte(`
 name: resolution-pins
@@ -858,6 +861,7 @@ pins:
 }
 
 func TestFlowSchemaDocumentDecode_RejectsUnsupportedInputPinResolutionFields(t *testing.T) {
+	// routing-example-census: parser-only issue=none owner=contracts.flow_schema_decoder proof=TestFlowSchemaDocumentDecode_RejectsUnsupportedInputPinResolutionFields
 	tests := []struct {
 		name string
 		body string
@@ -983,6 +987,7 @@ func TestFlowSchemaDocumentDecode_RejectsRetiredAndUnsupportedTopLevelFields(t *
 }
 
 func TestFlowSchemaDocumentDecode_PreservesTemplateInstanceDeclaration(t *testing.T) {
+	// routing-example-census: parser-only issue=none owner=contracts.flow_schema_decoder proof=TestFlowSchemaDocumentDecode_PreservesTemplateInstanceDeclaration
 	var doc FlowSchemaDocument
 	if err := yaml.Unmarshal([]byte(`
 name: template-flow
@@ -1039,6 +1044,7 @@ instance:
 }
 
 func TestFlowSchemaDocumentDecode_PreservesExplicitEmptyTemplateInstancePolicies(t *testing.T) {
+	// routing-example-census: parser-only issue=none owner=contracts.flow_schema_decoder proof=TestFlowSchemaDocumentDecode_PreservesExplicitEmptyTemplateInstancePolicies
 	var doc FlowSchemaDocument
 	if err := yaml.Unmarshal([]byte(`
 name: template-flow
@@ -1072,6 +1078,7 @@ mode: singleton
 }
 
 func TestFlowSchemaDocumentDecode_PreservesTemplateInstanceDuplicateKeysForResolver(t *testing.T) {
+	// routing-example-census: parser-only issue=none owner=contracts.flow_schema_decoder proof=TestFlowSchemaDocumentDecode_PreservesTemplateInstanceDuplicateKeysForResolver
 	var doc FlowSchemaDocument
 	if err := yaml.Unmarshal([]byte(`
 name: template-flow
@@ -1106,6 +1113,7 @@ instance: {}
 }
 
 func TestFlowSchemaDocumentDecode_RejectsUnsupportedTemplateInstanceFields(t *testing.T) {
+	// routing-example-census: parser-only issue=none owner=contracts.flow_schema_decoder proof=TestFlowSchemaDocumentDecode_RejectsUnsupportedTemplateInstanceFields
 	var doc FlowSchemaDocument
 	err := yaml.Unmarshal([]byte(`
 name: invalid-template
